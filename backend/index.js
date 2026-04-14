@@ -20,6 +20,8 @@ app.use(cors({
 app.use(cookieParser());
 app.use(express.json());
 
+app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+
 app.use('/api/movies',    moviesRouter);
 app.use('/api/showtimes', showtimesRouter);
 app.use('/api/seats',     seatsRouter);
