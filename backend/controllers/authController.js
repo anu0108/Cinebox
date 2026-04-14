@@ -5,11 +5,15 @@ const pool   = require('../db/pool');
 const JWT_SECRET  = process.env.JWT_SECRET;
 const JWT_EXPIRES = '7d';
 
+const isProd = process.env.NODE_ENV === 'production';
+
 const COOKIE_OPTIONS = {
-  httpOnly: true,                                      // JS cannot read this cookie — blocks XSS
-  sameSite: 'strict',                                  // Not sent on cross-site requests — blocks CSRF
-  secure:   process.env.NODE_ENV === 'production',     // HTTPS only in prod; plain HTTP ok in dev
-  maxAge:   7 * 24 * 60 * 60 * 1000,                  // 7 days in ms
+  httpOnly: true,
+  // cross-origin (prod): SameSite=none requires Secure=true
+  // same-origin (dev):   SameSite=lax works over plain HTTP
+  sameSite: isProd ? 'none' : 'lax',
+  secure:   isProd,
+  maxAge:   7 * 24 * 60 * 60 * 1000, // 7 days in ms
 };
 
 const register = async (req, res) => {

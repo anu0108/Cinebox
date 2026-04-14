@@ -1,6 +1,6 @@
 require('dotenv').config();
-const path         = require("path")
 const express      = require('express');
+const cors         = require('cors');
 const cookieParser = require('cookie-parser');
 
 const moviesRouter    = require('./routes/movies');
@@ -13,6 +13,10 @@ const authMiddleware  = require('./middleware/authMiddleware');
 
 const app = express();
 
+app.use(cors({
+  origin:      process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  credentials: true,
+}));
 app.use(cookieParser());
 app.use(express.json());
 
@@ -27,12 +31,6 @@ app.use('/api/bookings', (req, res, next) => {
   if (req.method === 'POST') return authMiddleware(req, res, next);
   next();
 }, bookingsRouter);
-
-app.use(express.static(path.join(__dirname, "../frontend/dist")));
-
-app.get(/.*/, (req, res) => {
-  res.sendFile(path.join(__dirname, "../frontend/dist/index.html"));
-});
 
 app.listen(5174, () => {
   console.log('Backend running on http://localhost:5174');
