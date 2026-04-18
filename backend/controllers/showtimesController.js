@@ -24,7 +24,7 @@ const getShowtimes = async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      `${SHOWTIME_JOIN} WHERE st.movie_id = $1 ORDER BY st.starts_at`,
+      `${SHOWTIME_JOIN} WHERE st.movie_id = $1 ORDER BY st.days_from_now, st.show_time`,
       [movieId]
     );
     res.json(rows);
