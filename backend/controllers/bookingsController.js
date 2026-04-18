@@ -10,7 +10,7 @@ const createBooking = async (req, res) => {
     // Single JOIN resolves everything needed for the booking snapshot
     const { rows: stRows } = await pool.query(`
       SELECT st.movie_id       AS "movieId",
-             st.starts_at      AS "startsAt",
+             (CURRENT_DATE + (st.days_from_now * INTERVAL '1 day') + st.show_time) AS "startsAt",
              st.price_per_seat AS "pricePerSeat",
              sc.name           AS hall,
              th.id             AS "theatreId",

@@ -1,11 +1,11 @@
 const pool = require('../db/pool');
 
-// enrichShowtime() is now a SQL JOIN — same shape returned, zero frontend changes needed.
+// starts_at is computed from show_time + days_from_now so dates are always in the future.
 const SHOWTIME_JOIN = `
   SELECT st.id,
          st.movie_id       AS "movieId",
          st.screen_id      AS "screenId",
-         st.starts_at      AS "startsAt",
+         (CURRENT_DATE + (st.days_from_now * INTERVAL '1 day') + st.show_time) AS "startsAt",
          st.price_per_seat AS "pricePerSeat",
          sc.name           AS hall,
          sc.total_rows     AS "totalRows",
