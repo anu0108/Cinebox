@@ -9,6 +9,7 @@ const seatsRouter     = require('./routes/seats');
 const bookingsRouter  = require('./routes/bookings');
 const theatresRouter  = require('./routes/theatres');
 const authRouter      = require('./routes/auth');
+const paymentsRouter  = require('./routes/payments');
 const authMiddleware  = require('./middleware/authMiddleware');
 
 const app = express();
@@ -27,12 +28,9 @@ app.use('/api/showtimes', showtimesRouter);
 app.use('/api/seats',     seatsRouter);
 app.use('/api/theatres',  theatresRouter);
 app.use('/api/auth',      authRouter);
+app.use('/api/payments',  paymentsRouter);
 
-// Bookings: GET is public (order history lookup), POST requires auth
-app.use('/api/bookings', (req, res, next) => {
-  if (req.method === 'POST') return authMiddleware(req, res, next);
-  next();
-}, bookingsRouter);
+app.use('/api/bookings', bookingsRouter);
 
 app.listen(5174, () => {
   console.log('Backend running on http://localhost:5174');

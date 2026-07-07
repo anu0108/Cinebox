@@ -1,14 +1,24 @@
 import { useState } from 'react'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { createBooking } from '../api/bookings'
-
+import { createOrder, verifyAndBook } from '../api/payments'
 
 const formatTime = (iso) =>
   new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 
 const formatDate = (iso) =>
   new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric' })
+
+const loadRazorpayScript = () =>
+  new Promise((resolve) => {
+    if (document.getElementById('razorpay-script')) return resolve(true)
+    const script = document.createElement('script')
+    script.id  = 'razorpay-script'
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js'
+    script.onload  = () => resolve(true)
+    script.onerror = () => resolve(false)
+    document.body.appendChild(script)
+  })
 
 const CheckoutPage = () => {
   const { state }  = useLocation()
@@ -19,7 +29,6 @@ const CheckoutPage = () => {
   const [submitting, setSubmitting] = useState(false)
   const [error,      setError]      = useState(null)
 
-  // Guard: no booking state
   if (!movie || !showtime || !selectedSeats) {
     return (
       <div className="text-center py-20">
@@ -31,7 +40,6 @@ const CheckoutPage = () => {
     )
   }
 
-  // Guard: not logged in
   if (!user) {
     return (
       <div className="text-center py-20 px-4">
@@ -55,22 +63,76 @@ const CheckoutPage = () => {
     )
   }
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
+  const handlePayment = async () => {
     setSubmitting(true)
     setError(null)
+
+    const loaded = await loadRazorpayScript()
+    if (!loaded) {
+      setError('Could not load payment gateway. Check your connection.')
+      setSubmitting(false)
+      return
+    }
+
     try {
-      const booking = await createBooking({
+      // Step 1: Check seat availability + create Razorpay order on the backend
+      const { orderId, amount, currency } = await createOrder({
+        amount:     totalPrice,
         showtimeId: showtime.id,
         seats:      selectedSeats,
-        name:       user.name,
-        email:      user.email,
       })
-      navigate('/confirmation', { state: { booking, movie } })
+
+      // Step 2: Open Razorpay checkout modal
+      const options = {
+        key:      import.meta.env.VITE_RAZORPAY_KEY_ID,
+        amount,
+        currency,
+        name:     'CineBook',
+        description: `${movie.title} — ${selectedSeats.length} seat${selectedSeats.length > 1 ? 's' : ''}`,
+        image:    movie.posterUrl,
+        order_id: orderId,
+        prefill: {
+          name:  user.name,
+          email: user.email,
+        },
+        theme: { color: '#fb7185' },
+        handler: async (response) => {
+          // Step 3: Verify signature + create booking on the backend
+          try {
+            const booking = await verifyAndBook({
+              razorpay_order_id:   response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature:  response.razorpay_signature,
+              showtimeId:  showtime.id,
+              seats:       selectedSeats,
+              name:        user.name,
+              email:       user.email,
+            })
+            navigate('/confirmation', { state: { booking, movie } })
+          } catch (err) {
+            const msg = err.response?.data?.error || 'Booking failed after payment. Contact support.'
+            setError(msg)
+            setSubmitting(false)
+          }
+        },
+        modal: {
+          ondismiss: () => setSubmitting(false),
+        },
+      }
+
+      const rzp = new window.Razorpay(options)
+      rzp.on('payment.failed', (response) => {
+        setError(response.error?.description || 'Payment failed. Please try again.')
+        setSubmitting(false)
+      })
+      rzp.open()
     } catch (err) {
-      const msg = err.response?.data?.error || 'Booking failed. Please try again.'
+      const msg = err.response?.data?.error || 'Could not initiate payment. Please try again.'
       setError(msg)
-    } finally {
+      // Seats were taken — send user back to pick different seats
+      if (err.response?.status === 409) {
+        setTimeout(() => navigate(`/showtimes/${showtime.id}/seats`, { state: { movie } }), 2000)
+      }
       setSubmitting(false)
     }
   }
@@ -128,7 +190,7 @@ const CheckoutPage = () => {
           </div>
         </div>
 
-        {/* Contact details — read-only, pulled from auth */}
+        {/* Contact details */}
         <div className="bg-white border border-gray-200 rounded-2xl p-6">
           <h3 className="font-semibold text-gray-900 mb-4">Contact Details</h3>
           <div className="space-y-3">
@@ -147,17 +209,21 @@ const CheckoutPage = () => {
           </div>
         </div>
 
-        {error && <p className="text-sm text-red-500 font-medium">{error}</p>}
+        {error && (
+          <p className="text-sm text-red-500 font-medium">{error}</p>
+        )}
 
-        <form onSubmit={handleSubmit}>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white font-semibold py-3 rounded-full transition-colors"
-          >
-            {submitting ? 'Confirming...' : `Pay ₹${totalPrice}`}
-          </button>
-        </form>
+        <button
+          onClick={handlePayment}
+          disabled={submitting}
+          className="w-full bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white font-semibold py-3 rounded-full transition-colors"
+        >
+          {submitting ? 'Opening payment...' : `Pay ₹${totalPrice}`}
+        </button>
+
+        <p className="text-center text-xs text-gray-400">
+          Secured by Razorpay · Your payment info is never stored on our servers
+        </p>
 
       </div>
     </div>

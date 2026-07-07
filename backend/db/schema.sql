@@ -56,6 +56,7 @@ CREATE TABLE users (
 
 CREATE TABLE bookings (
   id           VARCHAR(20)  PRIMARY KEY,
+  user_id      INT          NOT NULL REFERENCES users(id),
   showtime_id  VARCHAR(10)  NOT NULL REFERENCES showtimes(id),
   movie_id     VARCHAR(10)  NOT NULL,
   movie_title  VARCHAR(255) NOT NULL,
@@ -68,5 +69,7 @@ CREATE TABLE bookings (
   name         VARCHAR(255) NOT NULL,
   email        VARCHAR(255) NOT NULL,
   total_price  INT          NOT NULL,
-  booked_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+  booked_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  payment_id   TEXT,
+  order_id     TEXT
 );

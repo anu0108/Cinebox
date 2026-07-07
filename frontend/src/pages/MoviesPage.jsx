@@ -15,7 +15,8 @@ const SkeletonCard = () => (
 )
 
 // Hero carousel — cycles through all movies
-const Hero = ({ movies, navigate }) => {
+const Hero = ({ movies }) => {
+  const navigate = useNavigate()
   const [current, setCurrent] = useState(0)
 
   const prev = () => setCurrent((i) => (i === 0 ? movies.length - 1 : i - 1))
@@ -33,7 +34,7 @@ const Hero = ({ movies, navigate }) => {
   return (
     <div className="relative w-full bg-white overflow-hidden">
       {/* Subtle blurred backdrop — barely visible, just adds depth */}
-      <div className="absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <img
           src={movie.backdropUrl || movie.posterUrl}
           alt=""
@@ -137,7 +138,7 @@ const MoviesPage = () => {
     <div>
       {/* Hero carousel */}
       {!loading && movies.length > 0 && (
-        <Hero movies={movies} navigate={navigate} />
+        <Hero movies={movies} />
       )}
 
       {/* Main content */}

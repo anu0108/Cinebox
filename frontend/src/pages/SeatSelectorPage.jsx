@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useLocation, useNavigate, Link } from 'react-router-dom'
 import { getShowtime } from '../api/showtimes'
-import { getSeats } from '../api/seats'
+import { getSeats, lockSeat, unlockSeat } from '../api/seats'
+import { useAuth } from '../context/AuthContext'
 import screenImg from '../assets/screen-img-light.b7b18ffd.png'
 
 const formatTime = (iso) =>
@@ -12,16 +13,22 @@ const formatDate = (iso) =>
 
 const SeatSelectorPage = () => {
   const { showtimeId } = useParams()
-  const { state } = useLocation()
-  const navigate = useNavigate()
+  const { state }      = useLocation()
+  const navigate       = useNavigate()
+  const { user, openAuthModal } = useAuth()
 
   const movie = state?.movie || null
 
-  const [showtime, setShowtime] = useState(null)
-  const [seats, setSeats] = useState([])
+  const [showtime,    setShowtime]    = useState(null)
+  const [seats,       setSeats]       = useState([])
   const [selectedIds, setSelectedIds] = useState(new Set())
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [locking,     setLocking]     = useState(new Set()) // seats with in-flight lock request
+  const [loading,     setLoading]     = useState(true)
+  const [error,       setError]       = useState(null)
+
+  // Ref so the cleanup effect always sees the latest selectedIds without re-registering
+  const selectedIdsRef = useRef(new Set())
+  useEffect(() => { selectedIdsRef.current = selectedIds }, [selectedIds])
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -39,15 +46,55 @@ const SeatSelectorPage = () => {
       }
     }
     fetchAll()
+
+    // On unmount: release any locks this session acquired
+    return () => {
+      const held = [...selectedIdsRef.current]
+      if (held.length > 0) {
+        held.forEach(seatId => unlockSeat({ seatId }).catch(() => {}))
+      }
+    }
   }, [showtimeId])
 
-  const toggleSeat = (seat) => {
+  const toggleSeat = async (seat) => {
     if (seat.status === 'taken') return
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      next.has(seat.id) ? next.delete(seat.id) : next.add(seat.id)
-      return next
-    })
+    if (locking.has(seat.id)) return // request already in flight
+
+    // 'held' by someone else is intentionally NOT blocked here —
+    // the lock attempt below will fail with 409 and show a message instead
+
+    // Must be logged in to hold a seat
+    if (!user) {
+      openAuthModal('login')
+      return
+    }
+
+    setLocking(prev => new Set(prev).add(seat.id))
+
+    try {
+      if (selectedIds.has(seat.id)) {
+        // Deselect — release the Redis lock
+        await unlockSeat({ seatId: seat.id })
+        setSelectedIds(prev => { const n = new Set(prev); n.delete(seat.id); return n })
+        // Mark seat as available in local state so it turns white immediately
+        setSeats(prev => prev.map(s => s.id === seat.id ? { ...s, status: 'available' } : s))
+      } else {
+        // Select — acquire Redis lock
+        await lockSeat({ seatId: seat.id, showtimeId })
+        setSelectedIds(prev => new Set(prev).add(seat.id))
+        // Mark seat as held in local state
+        setSeats(prev => prev.map(s => s.id === seat.id ? { ...s, status: 'held' } : s))
+      }
+    } catch (err) {
+      const status = err.response?.status
+      if (status === 409) {
+        // Someone else just grabbed it — refresh seat grid
+        const fresh = await getSeats(showtimeId).catch(() => null)
+        if (fresh) setSeats(fresh)
+      }
+    } finally {
+      setLocking(prev => { const n = new Set(prev); n.delete(seat.id); return n })
+    }
   }
 
   const rows = seats.reduce((acc, seat) => {
@@ -58,7 +105,7 @@ const SeatSelectorPage = () => {
   const rowLabels = Object.keys(rows).sort().reverse()
 
   const selectedCount = selectedIds.size
-  const totalPrice = showtime ? selectedCount * showtime.pricePerSeat : 0
+  const totalPrice    = showtime ? selectedCount * showtime.pricePerSeat : 0
 
   const handleContinue = () => {
     navigate('/checkout', {
@@ -87,20 +134,31 @@ const SeatSelectorPage = () => {
   }
 
   const renderSeat = (seat) => {
-    const isTaken = seat.status === 'taken'
+    const isTaken    = seat.status === 'taken'
+    const isHeld     = seat.status === 'held' && !selectedIds.has(seat.id)
     const isSelected = selectedIds.has(seat.id)
+    const isLocking  = locking.has(seat.id)
+    const isBlocked  = isTaken || isHeld  // both treated as unavailable visually
+
     return (
       <button
         key={seat.id}
         onClick={() => toggleSeat(seat)}
-        disabled={isTaken}
-        title={isTaken ? 'Taken' : `${seat.row}${seat.number}`}
+        disabled={isBlocked || isLocking}
+        title={
+          isTaken   ? 'Booked' :
+          isHeld    ? 'Temporarily held' :
+          isLocking ? 'Reserving...' :
+          `${seat.row}${seat.number}`
+        }
         className={`w-8 h-7 rounded-t-lg text-xs font-medium transition-all duration-150 border
-          ${isTaken
+          ${isBlocked
             ? 'bg-gray-200 border-gray-200 text-gray-400 cursor-not-allowed'
-            : isSelected
-              ? 'bg-rose-400 border-rose-400 text-white shadow-sm scale-105'
-              : 'bg-white border-gray-300 text-gray-500 hover:border-rose-300 hover:bg-rose-50 cursor-pointer'
+            : isLocking
+              ? 'bg-rose-200 border-rose-200 text-rose-300 cursor-wait animate-pulse'
+              : isSelected
+                ? 'bg-rose-400 border-rose-400 text-white shadow-sm scale-105'
+                : 'bg-white border-gray-300 text-gray-500 hover:border-rose-300 hover:bg-rose-50 cursor-pointer'
           }`}
       >
         {seat.number}
@@ -111,7 +169,6 @@ const SeatSelectorPage = () => {
   return (
     <div className="max-w-5xl mx-auto px-4 py-10 pb-36">
 
-      {/* Back link */}
       <Link
         to={movie ? `/movies/${movie.id}` : '/'}
         className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-900 mb-6 transition-colors"
@@ -119,7 +176,6 @@ const SeatSelectorPage = () => {
         ← Back
       </Link>
 
-      {/* Header */}
       <div className="mb-8">
         {movie && <h1 className="text-2xl font-bold text-gray-900">{movie.title}</h1>}
         {showtime && (
@@ -133,8 +189,8 @@ const SeatSelectorPage = () => {
       <div className="flex items-center justify-center gap-6 mb-8">
         {[
           { color: 'bg-white border border-gray-300', label: 'Available' },
-          { color: 'bg-rose-400 border-rose-400', label: 'Selected' },
-          { color: 'bg-gray-200 border-gray-200', label: 'Taken' },
+          { color: 'bg-rose-400 border-rose-400',     label: 'Selected' },
+          { color: 'bg-gray-200 border-gray-200',     label: 'Unavailable' },
         ].map(({ color, label }) => (
           <div key={label} className="flex items-center gap-2">
             <div className={`w-5 h-4 rounded-t-md border ${color}`} />
@@ -143,12 +199,12 @@ const SeatSelectorPage = () => {
         ))}
       </div>
 
-      {/* Seat grid — centered, each row: label + left block + aisle + right block */}
+      {/* Seat grid */}
       <div className="flex flex-col items-center space-y-2 mb-10">
         {rowLabels.map((row) => {
           const rowSeats = rows[row]
-          const mid = Math.ceil(rowSeats.length / 2)
-          const left = rowSeats.slice(0, mid)
+          const mid   = Math.ceil(rowSeats.length / 2)
+          const left  = rowSeats.slice(0, mid)
           const right = rowSeats.slice(mid)
           return (
             <div key={row} className="flex items-center gap-2">
@@ -165,18 +221,14 @@ const SeatSelectorPage = () => {
         })}
       </div>
 
-      {/* Screen — at the bottom, as seen from the audience */}
+      {/* Screen */}
       <div className="flex flex-col items-center">
-        <img
-          src={screenImg}
-          alt="Screen"
-          className="w-3/4 opacity-80"
-          style={{ filter: 'hue-rotate(70deg) saturate(1.2)' }}
-        />
+        <img src={screenImg} alt="Screen" className="w-3/4 opacity-80"
+          style={{ filter: 'hue-rotate(70deg) saturate(1.2)' }} />
         <p className="text-xs text-gray-400 mt-2 tracking-widest uppercase">Screen</p>
       </div>
 
-      {/* Sticky bottom summary bar */}
+      {/* Sticky bottom bar */}
       {selectedCount > 0 && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg px-6 py-4">
           <div className="max-w-5xl mx-auto flex items-center justify-between">

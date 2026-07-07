@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Ticket } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
-import { getBookingsByEmail } from '../api/bookings'
+import { getMyBookings } from '../api/bookings'
 
 
 const formatTime = (iso) =>
@@ -22,12 +22,20 @@ const BookingHistoryPage = () => {
   // Auto-fetch when user is logged in
   useEffect(() => {
     if (!user) return
-    setLoading(true)
-    setError(null)
-    getBookingsByEmail(user.email)
-      .then((data) => { setBookings(data); setFetched(true) })
-      .catch(() => setError('Failed to fetch bookings. Please try again.'))
-      .finally(() => setLoading(false))
+    const fetch = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const data = await getMyBookings()
+        setBookings(data)
+        setFetched(true)
+      } catch {
+        setError('Failed to fetch bookings. Please try again.')
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetch()
   }, [user])
 
   // Not logged in
